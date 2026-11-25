@@ -2,8 +2,13 @@ dist: trusty
 
 language: java
 
-jdk:
-  - oraclejdk11
+# The reactor needs JDK 17+ since logback-classic-blackbox depends on jetty-ee10 12.x
+# (class file version 61); upstream's GitHub CI and the 1.5.35 release use JDK 21.
+before_install:
+  - curl -fsSL -o /tmp/jdk21.tar.gz "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse"
+  - mkdir -p /tmp/jdk21 && tar -xzf /tmp/jdk21.tar.gz -C /tmp/jdk21 --strip-components=1
+  - export JAVA_HOME=/tmp/jdk21 && export PATH=/tmp/jdk21/bin:$PATH
+  - java -version && mvn -version
 
 notifications:
   email:
@@ -14,6 +19,7 @@ install: /bin/true
 script:
   - mvn clean
   - mvn install
+  - java .github/seal/SkipReport.java
 cache:
   directories:
   - $HOME/.m2

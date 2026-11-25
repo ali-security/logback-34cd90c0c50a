@@ -2,6 +2,11 @@ name: CI
 
 on:
   workflow_dispatch:    # ← this enables manual runs
+    inputs:
+      test-filter:
+        description: 'Optional surefire -Dtest selector; empty runs the full suite'
+        required: false
+        default: ''
 
   # Trigger on push to any branch
   #push:
@@ -24,11 +29,12 @@ jobs:
   Test:
     name: JDK ${{ matrix.jdk }}, ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       matrix:
         jdk: [21]
         os: [ubuntu-latest, windows-latest, macos-latest]
-      fail-fast: true
+      fail-fast: false
       max-parallel: 4
     steps:
     - uses: actions/checkout@v4
@@ -42,6 +48,52 @@ jobs:
         cache: maven  # This enables Maven dependency caching
     - name: Install
       # download dependencies, etc, so test log looks better
-      run: mvn -B install
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.test-filter }}" ]; then
+          mvn -B install -Dtest="${{ inputs.test-filter }}" -Dsurefire.failIfNoSpecifiedTests=false
+        else
+          mvn -B install
+        fi
+    - name: Test summary and skipped-test reasons
+      shell: bash
+      run: java .github/seal/SkipReport.java
 
-
+  Package:
+    # Builds the published logback-classic jars. The released jars carry CRLF line endings in
+    # checked-in text resources (pom.xml, *.xml, META-INF/services) but LF in Maven-generated
+    # files, i.e. a CRLF working tree built on a non-Windows JVM; reproduce that checkout here.
+    # Two non-clean install passes mirror release.sh (install, then deploy), which yields the
+    # Originally-Created-By MANIFEST header of the published jar.
+    name: Package logback-classic (JDK 21)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 50
+    - name: Re-checkout with CRLF line endings
+      run: |
+        git config core.eol crlf
+        git rm -rq --cached .
+        git reset -q --hard HEAD
+    - name: Set up Java 21
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: 21
+        cache: maven
+    - name: Build jars
+      run: |
+        mvn -B -V install -pl logback-classic -am -Dmaven.test.skip.exec=true
+        mvn -B install -pl logback-classic -am -Dmaven.test.skip.exec=true
+    - name: Upload logback-classic jars
+      uses: actions/upload-artifact@v4
+      with:
+        name: logback-classic-jars
+        path: |
+          logback-classic/target/logback-classic-*.jar
+          !logback-classic/target/logback-classic-*-sources.jar
+          !logback-classic/target/logback-classic-*-javadoc.jar
+          !logback-classic/target/logback-classic-*-test-sources.jar
+        if-no-files-found: error
